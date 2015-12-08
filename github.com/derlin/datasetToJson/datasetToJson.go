@@ -99,6 +99,14 @@ func main(){
 
 // ------------------------------------------------
 
+
+
+/**
+ * @brief The dispatcher launches the processes and wait for the reducer to finish
+ * 
+ * @param string the filepath to the yahoo-flickr-datafile to process
+ * @param int the number of processes/mappers to use
+ */
 func dispatcher(filepath string, nbrProcesses int){
 
     in := make(chan string)
@@ -108,7 +116,7 @@ func dispatcher(filepath string, nbrProcesses int){
 
     // launch processes
     for i := 0; i < nbrProcesses; i++ {
-        go process(i, in, outOk, outError)
+        go mapper(i, in, outOk, outError)
     }
 
     // launch reducer
@@ -144,6 +152,15 @@ func dispatcher(filepath string, nbrProcesses int){
 }
 
 
+/**
+ * @brief Gather the results from the mapper
+ * @details Prints out the results and/or errors, i.e. the json associated with each image from the input file
+ * 
+ * @param chan Channel used to receive the json results from the mappers
+ * @param chan Channel used to receive the errors from the mappers
+ * @param chan Channel used to receive the total number of lines from the dispatcher (to know when to stop)
+ * @param chan Channel used to send a signal to the dispatcher when done
+ */
 func reducer(outOk chan *JsonResult, outError chan error, totalLines chan int64, done chan bool ) {
     // gather results
     var totalOks, totalErrors, results int64
@@ -191,7 +208,16 @@ func reducer(outOk chan *JsonResult, outError chan error, totalLines chan int64,
 }
 
 
-func process(jid int, in chan string, outOk chan *JsonResult, outError chan error) {
+/**
+ * @brief A mapper processes one line from the input file, fetches the details
+ * related to the image from Flickr and returns an error or a json.
+ * 
+ * @param int unique id of the process (for logging purposes)
+ * @param chan the input channel, one line at a time
+ * @param chan the channel used to send the results (json) to the reducer
+ * @param chan the channel used to send the errors to the reducer
+ */
+func mapper(jid int, in chan string, outOk chan *JsonResult, outError chan error) {
 
     log.Printf("Job %d starting\n", jid)
 
@@ -224,6 +250,16 @@ func process(jid int, in chan string, outOk chan *JsonResult, outError chan erro
 
 // ------------------------------------------------
 
+/**
+ * @brief Fetches the details about an image from Flickr and returns a json
+ * @details only images with tags are returned.
+ * 
+ * @param string id of the image
+ * @param string owner id (nsid) of the owner
+ * @param string date taken, in sql.date format
+ * @return a json representation of the Photo struct, or an error if 
+ * the image has not been found or the taglist is empty
+ */
 func getJson(id string, owner string, dateTaken string) (string, error) {
     ps, err := photoSearch(owner, dateTaken)
 
@@ -261,6 +297,15 @@ func getJson(id string, owner string, dateTaken string) (string, error) {
 } 
 
 
+/**
+ * @brief retrieves details about an image from Flickr
+ * @details [long description]
+ * 
+ * @param string owner id (nsid) of the owner
+ * @param string date taken, in sql.date format
+ * @return an array of Photo that have been taken by the owner at the given time
+ * or an error
+ */
 func photoSearch(owner string, dateTaken string) ([]Photo, error) {
 
     dateTaken = url.QueryEscape(dateTaken)
