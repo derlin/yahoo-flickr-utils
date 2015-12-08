@@ -78,11 +78,10 @@ func main(){
         ExitErr(fmt.Sprintf("usage: %s <path to data file> [<nbr processes>]\n", os.Args[0]))
     }
 
-    if len(os.Args) == 2 {
-        singleProcess(os.Args[1])
+    nbrProcesses := 2 // default 
 
-    }else{
-        var nbrProcesses int
+    if len(os.Args) > 2 {
+        
         var err error
 
         if nbrProcesses, err = strconv.Atoi(os.Args[2]); err != nil {
@@ -93,51 +92,12 @@ func main(){
             ExitErr("error: nbrProcesses must be between 1 and 10")
         }
 
-        dispatcher(os.Args[1], nbrProcesses)
     }
+    
+    dispatcher(os.Args[1], nbrProcesses)
 }
 
-
-
-func singleProcess(filepath string) {
-    file, err := os.Open(filepath)
-    CheckErr(err)
-
-    defer file.Close()
-
-    scanner := bufio.NewScanner(file)
-
-    var lines, ok, errors int64
-
-    for scanner.Scan() {
-
-        tokens := strings.Fields(scanner.Text())
-        id := tokens[0]
-        owner := tokens[1]
-        dateTaken := tokens[3] + " " + tokens[4][:len(tokens[4])-2]
-        
-        j, err := getJson(id, owner, dateTaken)
-        lines++
-
-        if err != nil {
-            log.Println(err)
-            errors++
-
-        }else{
-            fmt.Println(j)
-            log.Println(id + " : OK")
-            ok++
-        }
-    }
-
-    if err := scanner.Err(); err != nil {
-        CheckErr(err)
-    } 
-
-    log.Printf("STATS: lines = %d, ok = %d, errors = %d\n", lines, ok, errors)
-}
-
-
+// ------------------------------------------------
 
 func dispatcher(filepath string, nbrProcesses int){
 
