@@ -35,8 +35,10 @@ type Photo struct {
     Farm int        `xml:"farm,attr" json:"farm"`
     Title string    `xml:"photo,attr" json:"title"`
     Descr string    `xml:"description" json:"description"`
-    Tags string     `xml:"tags,attr" json:"tags"`
-    MachineTags string       `xml:"machine_tags,attr" json:"machine_tags"`
+    Tags string     `xml:"tags,attr" json:"-"`
+    TagsArray []string  `json:"tags"`
+    MachineTags string       `xml:"machine_tags,attr" json:"-"`
+    MachineTagsArray []string `json:"machine_tags"`
     Url string      `xml:"url_o,attr" json:"url"`
     Height int      `xml:"height_o,attr" json:"height"`
     Width int       `xml:"width_o,attr" json:"width"`
@@ -137,6 +139,9 @@ func getJson(id string, owner string, dateTaken string) (string, error) {
     if p.Tags == "" {
         return "", errors.New(fmt.Sprintf("%s [%s] : tags lists empty", id, p.Url))
     }
+
+    p.TagsArray = strings.Fields(p.Tags)
+    p.MachineTagsArray = strings.Fields(p.MachineTags)
     
     j, err := json.Marshal(p)
 
