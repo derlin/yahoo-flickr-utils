@@ -14,12 +14,13 @@ import (
     "log"
     "math"
     "strconv"
+    "time"
 )
 
 
 const (
-    SEARCH_URL = "https://api.flickr.com/services/rest/?method=flickr.photos.search&api_key=3b0156f4f9282d41826ad695c4082f61"
-    SEARCH_EXTRAS = "description,tags,machine_tags,url_o"
+    SEARCH_URL = "https://api.flickr.com/services/rest/?method=flickr.photos.search&api_key=243075ed07d2c7f3c7ea7a408db48c62"
+    SEARCH_EXTRAS = "description,tags,machine_tags,url_o,geo,date_upload,date_taken,owner_name"
 )
 
 // ------------------------------------------------
@@ -35,15 +36,32 @@ type Photo struct {
     Secret string   `xml:"secret,attr" json:"secret"`
     Server string   `xml:"server,attr" json:server"`
     Farm int        `xml:"farm,attr" json:"farm"`
-    Title string    `xml:"photo,attr" json:"title"`
+    Title string    `xml:"title,attr" json:"title"`
     Descr string    `xml:"description" json:"description"`
-    Tags string     `xml:"tags,attr" json:"-"`
-    TagsArray []string  `json:"tags"`
-    MachineTags string       `xml:"machine_tags,attr" json:"-"`
+
+    Tags string               `xml:"tags,attr" json:"-"`
+    TagsArray []string        `json:"tags"`
+    MachineTags string        `xml:"machine_tags,attr" json:"-"`
     MachineTagsArray []string `json:"machine_tags"`
+
     Url string      `xml:"url_o,attr" json:"url"`
     Height int      `xml:"height_o,attr" json:"height"`
     Width int       `xml:"width_o,attr" json:"width"`
+
+    GeoInfos        `json:"geo"`
+    DatesInfos      `json:"dates"`
+}
+
+type DatesInfos struct {  
+    Upload string    `xml:"dateupload,attr" json:"upload"`
+    Taken string     `xml:"datetaken,attr" json:"taken"`
+}
+
+type GeoInfos struct {   
+    Latitude int    `xml:"latitude,attr" json:"lat"`
+    Longitude int   `xml:"longitude,attr" json:"long"`
+    Accuracy int   `xml:"accuracy,attr" json:"accuracy"`
+    Context int    `xml:"context,attr" json:"context"`
 }
 
 type JsonResult struct {
@@ -69,6 +87,17 @@ func CheckErr(err error) {
 }
 
 // ------------------------------------------------
+func timestampToSqlDate(timestamp string) (string, error) {
+    i, err := strconv.ParseInt(timestamp, 10, 64)
+    if err != nil {
+        return "", err
+    }
+    tm := time.Unix(i, 0)
+    s := tm.Format(time.RFC3339)
+    s = strings.Replace(s, "T", " ", -1)[:len(s)-1]
+    return s, nil
+}
+// ------------------------------------------------
 
 
 func main(){
@@ -88,8 +117,8 @@ func main(){
             ExitErr(fmt.Sprintf("error: %s is not an int", os.Args[2]))
         } 
         
-        if nbrProcesses < 0 || nbrProcesses > 10 {
-            ExitErr("error: nbrProcesses must be between 1 and 10")
+        if nbrProcesses < 0 || nbrProcesses > 50 {
+            ExitErr("error: nbrProcesses must be between 1 and 50")
         }
 
     }
@@ -98,7 +127,7 @@ func main(){
 }
 
 // ------------------------------------------------
-
+//go run datasetToJson.go F:\dataset0-split-500_000\yfcc100m_dataset-002 20 1> yfcc100m_dataset-002.json 2> yfcc100m_dataset-002.log
 
 
 /**
@@ -132,7 +161,7 @@ func dispatcher(filepath string, nbrProcesses int){
 
     for scanner.Scan() {
         in <- scanner.Text()
-        log.Println("Master: dispatched 1 line")
+        //log.Println("Master: dispatched 1 line")
         lines++
     }
     totalLines <- lines
@@ -229,7 +258,7 @@ func mapper(jid int, in chan string, outOk chan *JsonResult, outError chan error
             return
         }
 
-        log.Printf("Job %d processing one line\n", jid)
+        //log.Printf("Job %d processing one line\n", jid)
         tokens := strings.Fields(line)
         id := tokens[0]
         owner := tokens[1]
@@ -243,7 +272,7 @@ func mapper(jid int, in chan string, outOk chan *JsonResult, outError chan error
             outOk <- &JsonResult{id, string(j)}
         }
 
-        log.Printf("Job %d processed one line\n", jid)
+        //log.Printf("Job %d processed one line\n", jid)
     }
 
 }
@@ -286,6 +315,7 @@ func getJson(id string, owner string, dateTaken string) (string, error) {
 
     p.TagsArray = strings.Fields(p.Tags)
     p.MachineTagsArray = strings.Fields(p.MachineTags)
+    p.DatesInfos.Upload, _ = timestampToSqlDate(p.DatesInfos.Upload)
     
     j, err := json.Marshal(p)
 
@@ -311,7 +341,7 @@ func photoSearch(owner string, dateTaken string) ([]Photo, error) {
     dateTaken = url.QueryEscape(dateTaken)
     q := fmt.Sprintf("%s&user_id=%s&min_taken_date=%s&max_taken_date=%s&extras=%s", 
         SEARCH_URL, owner, dateTaken, dateTaken, url.QueryEscape(SEARCH_EXTRAS))
-    // fmt.Println(q)
+    //fmt.Println(q)
     resp, err := http.Get(q)
     if err != nil {
         panic(err)
