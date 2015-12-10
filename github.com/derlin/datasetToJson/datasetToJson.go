@@ -9,7 +9,6 @@ import (
     "io/ioutil"
     "os"
     "bufio"
-    "errors"
     "strings"
     "log"
     "math"
@@ -21,6 +20,9 @@ import (
 const (
     SEARCH_URL = "https://api.flickr.com/services/rest/?method=flickr.photos.search&api_key=243075ed07d2c7f3c7ea7a408db48c62"
     SEARCH_EXTRAS = "description,tags,machine_tags,url_o,geo,date_upload,date_taken,owner_name"
+    MISSING_ERROR = "MISSING"
+    NOTAGS_ERROR = "NOTAGS"
+    OTHER_ERROR = "??"
 )
 
 // ------------------------------------------------
@@ -72,6 +74,31 @@ type JsonResult struct {
 
 // ------------------------------------------------
 
+type FlickrError struct {
+    Type string
+    Id string
+    Line string
+    ErrorTxt string
+}
+
+func (e *FlickrError) Error() string {
+    return e.ErrorTxt
+}
+
+func MissingError(id string, details string) *FlickrError {
+    return &FlickrError{MISSING_ERROR, id, "", fmt.Sprintf("%s : missing %s", id, details)}
+}
+
+func  NoTagsError(id string, details string) *FlickrError {
+    return &FlickrError{NOTAGS_ERROR, id, "", fmt.Sprintf("%s : tags list empty %s", id, details)}
+}
+
+func  OtherError(id string, details string) *FlickrError {
+    return &FlickrError{OTHER_ERROR, id, "", fmt.Sprintf("%s : UNKNOWN ERROR %s %s", id, details)}
+}
+
+// ------------------------------------------------
+
 var logger *log.Logger
 
 
@@ -87,6 +114,7 @@ func CheckErr(err error) {
 }
 
 // ------------------------------------------------
+
 func timestampToSqlDate(timestamp string) (string, error) {
     i, err := strconv.ParseInt(timestamp, 10, 64)
     if err != nil {
@@ -140,7 +168,7 @@ func dispatcher(filepath string, nbrProcesses int){
 
     in := make(chan string)
     outOk := make(chan *JsonResult)
-    outError := make(chan error)
+    outError := make(chan *FlickrError)
 
 
     // launch processes
@@ -151,7 +179,7 @@ func dispatcher(filepath string, nbrProcesses int){
     // launch reducer
     totalLines := make(chan int64)
     done := make(chan bool)
-    go reducer(outOk, outError, totalLines, done)
+    go reducer(filepath, outOk, outError, totalLines, done)
 
     // read file and dispatch lines to processes
     file, err := os.Open(os.Args[1])
@@ -190,12 +218,24 @@ func dispatcher(filepath string, nbrProcesses int){
  * @param chan Channel used to receive the total number of lines from the dispatcher (to know when to stop)
  * @param chan Channel used to send a signal to the dispatcher when done
  */
-func reducer(outOk chan *JsonResult, outError chan error, totalLines chan int64, done chan bool ) {
+func reducer(filepath string, outOk chan *JsonResult, outError chan *FlickrError, totalLines chan int64, done chan bool ) {
     // gather results
     var totalOks, totalErrors, results int64
     
     var lines, l int64
     lines =  math.MaxInt64
+
+    f, err := os.OpenFile(filepath + ".json", os.O_CREATE | os.O_WRONLY, 0775)
+    CheckErr(err)
+    defer f.Close()
+
+    fmissing, err := os.OpenFile(filepath + "-missing.json", os.O_CREATE | os.O_WRONLY, 0775)
+    CheckErr(err)
+    defer fmissing.Close()
+
+    fother, err := os.OpenFile(filepath + "-??.json", os.O_CREATE | os.O_WRONLY, 0775)
+    CheckErr(err)
+    defer fother.Close()
 
     for results = 0; results < lines; {
         var ok bool
@@ -209,14 +249,19 @@ func reducer(outOk chan *JsonResult, outError chan error, totalLines chan int64,
 
             case err, ok := <- outError:
                 if ok { 
-                    log.Println(err)
+                    log.Println(err.Type + " " + err.Error())
+                    if err.Type == MISSING_ERROR {
+                        fmissing.WriteString(err.Line + "\n")
+                    }else if err.Type == OTHER_ERROR {
+                        fother.WriteString(err.Line + "\n")
+                    }
                     totalErrors++
                     results++
                 }
 
             case res, ok := <- outOk:
                 if ok {
-                    fmt.Println(res.Json)
+                    f.WriteString(res.Json + "\n")
                     log.Println(res.Id + " : OK")
                     totalOks++
                     results++
@@ -246,7 +291,7 @@ func reducer(outOk chan *JsonResult, outError chan error, totalLines chan int64,
  * @param chan the channel used to send the results (json) to the reducer
  * @param chan the channel used to send the errors to the reducer
  */
-func mapper(jid int, in chan string, outOk chan *JsonResult, outError chan error) {
+func mapper(jid int, in chan string, outOk chan *JsonResult, outError chan *FlickrError) {
 
     log.Printf("Job %d starting\n", jid)
 
@@ -266,6 +311,7 @@ func mapper(jid int, in chan string, outOk chan *JsonResult, outError chan error
         j, err := getJson(id, owner, dateTaken)
 
         if err != nil {
+            err.Line = line
             outError <- err
 
         }else{
@@ -289,11 +335,11 @@ func mapper(jid int, in chan string, outOk chan *JsonResult, outError chan error
  * @return a json representation of the Photo struct, or an error if 
  * the image has not been found or the taglist is empty
  */
-func getJson(id string, owner string, dateTaken string) (string, error) {
+func getJson(id string, owner string, dateTaken string) (string, *FlickrError) {
     ps, err := photoSearch(owner, dateTaken)
 
     if err != nil {
-        return "", errors.New(fmt.Sprintf("%s %s %s : not found (%s)", id, owner, dateTaken, err))
+        return "", MissingError(id, err.Error())
     }
 
 
@@ -306,11 +352,11 @@ func getJson(id string, owner string, dateTaken string) (string, error) {
 
 
     if p.Id == "" {
-        return "", errors.New(fmt.Sprintf("%s %s %s : not found (%s)", id, owner, dateTaken))
+        return "", MissingError(id, "")
     }
 
     if p.Tags == "" {
-        return "", errors.New(fmt.Sprintf("%s [%s] : tags lists empty", id, p.Url))
+        return "", NoTagsError(id, p.Url)
     }
 
     p.TagsArray = strings.Fields(p.Tags)
@@ -320,10 +366,10 @@ func getJson(id string, owner string, dateTaken string) (string, error) {
     j, err := json.Marshal(p)
 
     if err != nil {
-        return "", errors.New(fmt.Sprintf("%s : error while jsonifying %s", id, p))
+        return "", OtherError(id, fmt.Sprintf("%s : error while jsonifying %s", id, p))
     }
 
-    return string(j), err
+    return string(j), nil
 } 
 
 
